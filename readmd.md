@@ -67,3 +67,19 @@ go build -o clipboard-sync main.go
 - 如果连接到某个节点失败，会自动从已知节点列表中移除
 - 每5秒广播一次自己的存在，以便新加入的节点能够发现
 - 每500毫秒检查一次剪贴板变化
+
+使用方式示例：
+
+列出可用网络接口：
+```bash
+./clipboard-sync -list
+```
+
+指定网段运行：
+```bash
+./clipboard-sync -network 192.168.1.255
+```
+同时指定网段和端口：
+```bash
+./clipboard-sync -network 192.168.1.255 -port 9000 -bport 9001
+```
