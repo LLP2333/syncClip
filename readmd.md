@@ -28,29 +28,26 @@ go build -o clipboard-sync main.go
 ```
 
 ## 使用方法
-
-### 默认模式
-
-直接运行程序，使用默认设置：
-
+列出可用网络接口：
 ```bash
-./clipboard-sync
+./clipboard-sync -list
+```
+指定网段运行：
+```bash
+./clipboard-sync -network 192.168.1.255
 ```
 
-这将启动一个监听端口9000，广播端口9001的实例，可以发送和接收剪贴板更新。
-
-### 自定义端口
-
+同时指定网段和端口：
 ```bash
-./clipboard-sync -port 9000 -bport 9001
+./clipboard-sync -network 192.168.1.255 -port 9000 -bport 9001
 ```
 
-### 仅服务器模式
+仅服务器模式
 
 如果只想接收而不发送剪贴板更新：
 
 ```bash
-./clipboard-sync -server
+./clipboard-sync -network 192.168.1.255  -server
 ```
 
 ## 工作原理
@@ -68,18 +65,3 @@ go build -o clipboard-sync main.go
 - 每5秒广播一次自己的存在，以便新加入的节点能够发现
 - 每500毫秒检查一次剪贴板变化
 
-使用方式示例：
-
-列出可用网络接口：
-```bash
-./clipboard-sync -list
-```
-
-指定网段运行：
-```bash
-./clipboard-sync -network 192.168.1.255
-```
-同时指定网段和端口：
-```bash
-./clipboard-sync -network 192.168.1.255 -port 9000 -bport 9001
-```
