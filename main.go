@@ -31,6 +31,7 @@ type Config struct {
 	PeersAddresses []string // 已知的对等节点地址
 	ServerMode     bool     // 是否为服务器模式（仅接收而不发送）
 	ClientID       string   // 客户端唯一标识
+	NetworkSegment string   // 局域网网段
 }
 
 var (
@@ -46,6 +47,8 @@ func main() {
 	port := flag.Int("port", 9000, "监听端口")
 	broadcastPort := flag.Int("bport", 9001, "广播端口")
 	serverMode := flag.Bool("server", false, "仅服务器模式（只接收不发送）")
+	networkSegment := flag.String("network", "255.255.255.255", "指定广播的网段，如192.168.1.255")
+	listInterfaces := flag.Bool("list", false, "列出所有可用的网络接口及其广播地址")
 	flag.Parse()
 
 	// 生成唯一的客户端ID
@@ -54,14 +57,26 @@ func main() {
 		hostname = "unknown"
 	}
 	config = Config{
-		Port:          *port,
-		BroadcastPort: *broadcastPort,
-		ServerMode:    *serverMode,
-		ClientID:      fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano()),
+		Port:           *port,
+		BroadcastPort:  *broadcastPort,
+		ServerMode:     *serverMode,
+		ClientID:       fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano()),
+		NetworkSegment: *networkSegment,
+	}
+
+	// 显示可用的网络接口
+	if *listInterfaces {
+		fmt.Println("可用的网络接口及广播地址:")
+		interfaces := getNetworkInterfaces()
+		for i, iface := range interfaces {
+			fmt.Printf("[%d] %s\n", i, iface)
+		}
+		os.Exit(0)
 	}
 
 	fmt.Printf("剪贴板同步服务已启动，ID: %s\n", config.ClientID)
 	fmt.Printf("监听端口: %d, 广播端口: %d\n", config.Port, config.BroadcastPort)
+	fmt.Printf("广播网段: %s\n", config.NetworkSegment)
 	if config.ServerMode {
 		fmt.Println("运行模式: 仅服务器（只接收不发送）")
 	} else {
@@ -288,8 +303,8 @@ func listenForBroadcasts() {
 
 // broadcastPresence 定期广播自己的存在
 func broadcastPresence() {
-	// 创建广播地址
-	broadcastAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("255.255.255.255:%d", config.BroadcastPort))
+	// 创建广播地址，使用指定的网段
+	broadcastAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", config.NetworkSegment, config.BroadcastPort))
 	if err != nil {
 		fmt.Printf("解析广播地址失败: %v\n", err)
 		return
@@ -348,4 +363,47 @@ func setClipboardContent(content string) {
 			return
 		}
 	}
+}
+
+// 获取所有网络接口的函数
+func getNetworkInterfaces() []string {
+	var interfaces []string
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		fmt.Printf("获取网络接口失败: %v\n", err)
+		return interfaces
+	}
+
+	for _, iface := range ifaces {
+		// 忽略回环接口和非活动接口
+		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			// 只考虑IPv4地址
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP.To4() == nil {
+				continue
+			}
+
+			// 计算广播地址
+			ip := ipNet.IP.To4()
+			mask := ipNet.Mask
+			broadcast := net.IP(make([]byte, 4))
+			for i := range ip {
+				broadcast[i] = ip[i] | ^mask[i]
+			}
+
+			interfaces = append(interfaces, broadcast.String())
+		}
+	}
+
+	return interfaces
 }
