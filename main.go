@@ -1,6 +1,11 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,7 +23,7 @@ import (
 
 // ClipboardData 表示剪贴板数据的结构
 type ClipboardData struct {
-	Content   string `json:"content"`
+	Content   string `json:"content"` // 加密后的内容
 	Type      string `json:"type"`
 	SenderID  string `json:"sender_id"` // 发送者ID，用于防止循环同步
 	Timestamp int64  `json:"timestamp"` // 时间戳，用于处理冲突
@@ -32,6 +37,7 @@ type Config struct {
 	ServerMode     bool     // 是否为服务器模式（仅接收而不发送）
 	ClientID       string   // 客户端唯一标识
 	NetworkSegment string   // 局域网网段
+	EncryptionKey  string   // 加密密钥
 }
 
 var (
@@ -49,7 +55,15 @@ func main() {
 	serverMode := flag.Bool("server", false, "仅服务器模式（只接收不发送）")
 	networkSegment := flag.String("network", "255.255.255.255", "指定广播的网段，如192.168.1.255")
 	listInterfaces := flag.Bool("list", false, "列出所有可用的网络接口及其广播地址")
+	encryptionKey := flag.String("key", "", "加密密钥（必须提供）")
 	flag.Parse()
+
+	// 检查加密密钥是否提供
+	if *encryptionKey == "" {
+		fmt.Println("错误: 必须提供加密密钥，使用 -key 参数")
+		flag.Usage()
+		os.Exit(1)
+	}
 
 	// 生成唯一的客户端ID
 	hostname, err := os.Hostname()
@@ -62,6 +76,7 @@ func main() {
 		ServerMode:     *serverMode,
 		ClientID:       fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano()),
 		NetworkSegment: *networkSegment,
+		EncryptionKey:  *encryptionKey,
 	}
 
 	// 显示可用的网络接口
@@ -77,6 +92,7 @@ func main() {
 	fmt.Printf("剪贴板同步服务已启动，ID: %s\n", config.ClientID)
 	fmt.Printf("监听端口: %d, 广播端口: %d\n", config.Port, config.BroadcastPort)
 	fmt.Printf("广播网段: %s\n", config.NetworkSegment)
+	fmt.Println("加密已启用")
 	if config.ServerMode {
 		fmt.Println("运行模式: 仅服务器（只接收不发送）")
 	} else {
@@ -111,6 +127,66 @@ func main() {
 	}()
 
 	wg.Wait()
+}
+
+// 加密函数: 使用AES-GCM加密数据
+func encrypt(plainText string, key string) (string, error) {
+	// 使用SHA-256生成固定长度的密钥
+	hash := sha256.Sum256([]byte(key))
+	block, err := aes.NewCipher(hash[:])
+	if err != nil {
+		return "", err
+	}
+
+	// 创建GCM模式
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	// 生成随机nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	// 加密数据
+	cipherText := gcm.Seal(nonce, nonce, []byte(plainText), nil)
+
+	// 返回Base64编码的密文
+	return base64.StdEncoding.EncodeToString(cipherText), nil
+}
+
+// 解密函数: 使用AES-GCM解密数据
+func decrypt(cipherText string, key string) (string, error) {
+	// 使用SHA-256生成固定长度的密钥
+	hash := sha256.Sum256([]byte(key))
+	data, err := base64.StdEncoding.DecodeString(cipherText)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(hash[:])
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	if len(data) < gcm.NonceSize() {
+		return "", fmt.Errorf("密文太短")
+	}
+
+	nonce, cipherData := data[:gcm.NonceSize()], data[gcm.NonceSize():]
+	plainText, err := gcm.Open(nil, nonce, cipherData, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plainText), nil
 }
 
 // startServer 启动TCP服务器，接收剪贴板更新
@@ -161,11 +237,19 @@ func handleConnection(conn net.Conn) {
 
 	// 更新最后同步时间戳
 	lastSync = data.Timestamp
-	lastContent = data.Content
+
+	// 解密接收到的内容
+	decryptedContent, err := decrypt(data.Content, config.EncryptionKey)
+	if err != nil {
+		fmt.Printf("解密内容失败，可能密钥不匹配: %v\n", err)
+		return
+	}
+
+	lastContent = decryptedContent
 
 	// 写入剪贴板
-	setClipboardContent(data.Content)
-	fmt.Printf("已从 %s 接收并同步内容 (长度: %d)...\n", conn.RemoteAddr(), len(data.Content))
+	setClipboardContent(decryptedContent)
+	fmt.Printf("已从 %s 接收并同步内容 (长度: %d)...\n", conn.RemoteAddr(), len(decryptedContent))
 }
 
 // monitorClipboard 监控本地剪贴板变化
@@ -183,9 +267,16 @@ func monitorClipboard() {
 			lastContent = currentContent
 			lastSync = time.Now().Unix()
 
+			// 加密剪贴板内容
+			encryptedContent, err := encrypt(currentContent, config.EncryptionKey)
+			if err != nil {
+				fmt.Printf("加密内容失败: %v\n", err)
+				continue
+			}
+
 			// 创建剪贴板数据
 			data := ClipboardData{
-				Content:   currentContent,
+				Content:   encryptedContent,
 				Type:      "text",
 				SenderID:  config.ClientID,
 				Timestamp: lastSync,
@@ -215,7 +306,7 @@ func broadcastToAllPeers(data ClipboardData) {
 		return
 	}
 
-	fmt.Printf("正在同步内容到 %d 个节点 (内容长度: %d)...\n", len(peers), len(data.Content))
+	fmt.Printf("正在同步加密内容到 %d 个节点 (内容长度: %d)...\n", len(peers), len(data.Content))
 
 	// 向所有已知节点发送数据
 	for peer := range peers {
@@ -277,24 +368,33 @@ func listenForBroadcasts() {
 		}
 
 		message := string(buffer[:n])
-		// 消息格式: "CLIPBOARD_SYNC:<client_id>:<tcp_port>"
+		// 消息格式: "CLIPBOARD_SYNC:<client_id>:<tcp_port>:<key_hash>"
 		if strings.HasPrefix(message, "CLIPBOARD_SYNC:") {
 			parts := strings.Split(message, ":")
-			if len(parts) >= 3 {
+			if len(parts) >= 4 {
 				clientID := parts[1]
 				if clientID != config.ClientID { // 忽略自己的广播
-					// 获取发送者的IP地址
-					ip := remoteAddr.IP.String()
-					port := parts[2]
+					// 验证密钥哈希
+					receivedKeyHash := parts[3]
+					hashBytes := sha256.Sum256([]byte(config.EncryptionKey))
+					ourKeyHash := fmt.Sprintf("%x", hashBytes[:8]) // 只使用哈希的前8字节
 
-					// 将节点添加到对等节点列表
-					peerAddr := fmt.Sprintf("%s:%s", ip, port)
-					peersMutex.Lock()
-					if _, exists := peers[peerAddr]; !exists {
-						peers[peerAddr] = true
-						fmt.Printf("发现新节点: %s (ID: %s)\n", peerAddr, clientID)
+					if receivedKeyHash == ourKeyHash {
+						// 获取发送者的IP地址
+						ip := remoteAddr.IP.String()
+						port := parts[2]
+
+						// 将节点添加到对等节点列表
+						peerAddr := fmt.Sprintf("%s:%s", ip, port)
+						peersMutex.Lock()
+						if _, exists := peers[peerAddr]; !exists {
+							peers[peerAddr] = true
+							fmt.Printf("发现新节点: %s (ID: %s)\n", peerAddr, clientID)
+						}
+						peersMutex.Unlock()
+					} else {
+						fmt.Printf("忽略密钥不匹配的节点 %s (ID: %s)\n", remoteAddr.IP.String(), clientID)
 					}
-					peersMutex.Unlock()
 				}
 			}
 		}
@@ -317,7 +417,10 @@ func broadcastPresence() {
 	}
 	defer conn.Close()
 
-	message := fmt.Sprintf("CLIPBOARD_SYNC:%s:%d", config.ClientID, config.Port)
+	// 计算密钥的哈希值前8字节，用于验证
+	hashBytes := sha256.Sum256([]byte(config.EncryptionKey))
+	keyHash := fmt.Sprintf("%x", hashBytes[:8]) // 只使用哈希的前8字节
+	message := fmt.Sprintf("CLIPBOARD_SYNC:%s:%d:%s", config.ClientID, config.Port, keyHash)
 
 	for {
 		_, err := conn.Write([]byte(message))

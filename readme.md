@@ -30,16 +30,16 @@ go build -o clipboard-sync main.go
 ## 使用方法
 列出可用网络接口：
 ```bash
-./clipboard-sync -list
+./clipboard-sync  -key password   -list
 ```
 指定网段运行：
 ```bash
-./clipboard-sync -network 192.168.1.255
+./clipboard-sync -key password -network 192.168.1.255 
 ```
 
 同时指定网段和端口：
 ```bash
-./clipboard-sync -network 192.168.1.255 -port 9000 -bport 9001
+./clipboard-sync -key password -network 192.168.1.255  -port 9000 -bport 9001
 ```
 
 仅服务器模式
@@ -47,9 +47,21 @@ go build -o clipboard-sync main.go
 如果只想接收而不发送剪贴板更新：
 
 ```bash
-./clipboard-sync -network 192.168.1.255  -server
+./clipboard-sync -key password -network 192.168.1.255  -server
 ```
-
+## 参数说明
+-key string
+加密密钥（必须提供）
+-list
+列出所有可用的网络接口及其广播地址
+-network string
+指定广播的网段，如192.168.1.255 (default "255.255.255.255")
+-bport int
+广播端口 (default 9001)
+-port int
+监听端口 (default 9000)
+-server
+仅服务器模式（只接收不发送）
 ## 工作原理
 
 1. 程序启动时，会生成一个唯一的客户端ID
