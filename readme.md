@@ -50,6 +50,7 @@ go build -o clipboard-sync main.go
 ./clipboard-sync -key password -network 192.168.1.255  -server
 ```
 ## 参数说明
+```text
 -key string
 加密密钥（必须提供）
 -list
@@ -62,6 +63,7 @@ go build -o clipboard-sync main.go
 监听端口 (default 9000)
 -server
 仅服务器模式（只接收不发送）
+```
 ## 工作原理
 
 1. 程序启动时，会生成一个唯一的客户端ID
