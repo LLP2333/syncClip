@@ -59,7 +59,7 @@ func main() {
 	flag.Parse()
 
 	// 检查加密密钥是否提供
-	if *encryptionKey == "" {
+	if *encryptionKey == "" && *listInterfaces == false {
 		fmt.Println("错误: 必须提供加密密钥，使用 -key 参数")
 		flag.Usage()
 		os.Exit(1)

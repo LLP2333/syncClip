@@ -30,7 +30,7 @@ go build -o clipboard-sync main.go
 ## 使用方法
 列出可用网络接口：
 ```bash
-./clipboard-sync  -key password   -list
+./clipboard-sync   -list
 ```
 指定网段运行：
 ```bash
